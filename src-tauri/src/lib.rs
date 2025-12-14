@@ -40,6 +40,26 @@ fn load_hotkeys_from_store(app: &tauri::AppHandle) -> HotkeySettings {
     default_settings
 }
 
+fn load_app_settings_from_store(app: &tauri::AppHandle) -> AppSettings {
+    let store = app.store(SETTINGS_FILENAME).expect("failed to get store");
+    let _ = store.reload();
+
+    if let Some(value) = store.get("app_settings") {
+        if let Ok(settings) = serde_json::from_value(value) {
+            return settings;
+        }
+    }
+
+    let default_settings = AppSettings::default();
+    let _ = store.set(
+        "app_settings".to_string(),
+        serde_json::to_value(&default_settings).unwrap(),
+    );
+    let _ = store.save();
+
+    default_settings
+}
+
 fn load_macros_from_store(app: &tauri::AppHandle) -> Vec<Macro> {
     let store = app.store(MACROS_FILENAME).expect("failed to get store");
     let _ = store.reload();
@@ -75,8 +95,17 @@ fn start_recording(settings: RecordingSettings, state: State<'_, AppState>) -> R
         return Err("Recording already in progress".to_string());
     }
 
-    let mut recorder = Recorder::new(settings);
-    recorder.start()?;
+    let app = state.app_handle.clone();
+
+    // Pass app_handle to Recorder
+    let mut recorder = Recorder::new(settings, Some(app.clone()));
+
+    // Load hotkeys to pass to recorder for filtering
+    let hotkeys = load_hotkeys_from_store(&app);
+
+    // Start with hotkeys
+    recorder.start(hotkeys)?;
+
     *recorder_lock = Some(recorder);
 
     println!("Recording started");
@@ -257,9 +286,41 @@ fn get_hotkeys(app: tauri::AppHandle) -> Result<HotkeySettings, String> {
     Ok(load_hotkeys_from_store(&app))
 }
 
+/// Update app settings
+#[tauri::command]
+fn update_app_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), String> {
+    let store = app.store(SETTINGS_FILENAME).map_err(|e| e.to_string())?;
+
+    // Update window state immediately
+    if let Some(window) = app.get_webview_window("main") {
+        window
+            .set_always_on_top(settings.always_on_top)
+            .map_err(|e| e.to_string())?;
+    }
+
+    let _ = store.set(
+        "app_settings".to_string(),
+        serde_json::to_value(&settings).map_err(|e| e.to_string())?,
+    );
+    let _ = store.save();
+
+    Ok(())
+}
+
+/// Get current app settings
+#[tauri::command]
+fn get_app_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
+    Ok(load_app_settings_from_store(&app))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(tauri_plugin_log::log::LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -269,89 +330,89 @@ pub fn run() {
             // Try to unregister any existing shortcuts first
             let _ = app.global_shortcut().unregister_all();
 
-            // Load hotkeys from store
-            let hotkey_settings = load_hotkeys_from_store(app.app_handle());
-            println!("Loaded hotkeys: {:?}", hotkey_settings);
+            // Load saved hotkeys
+            let hotkeys = load_hotkeys_from_store(app.handle());
+            println!("Loaded hotkeys: {:?}", hotkeys);
 
-            // Load macros from store
-            let loaded_macros = load_macros_from_store(app.app_handle());
+            // Load and apply app settings
+            let app_settings = load_app_settings_from_store(app.handle());
+            println!("Loaded app settings: {:?}", app_settings);
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_always_on_top(app_settings.always_on_top);
+            }
+
+            // Register global shortcuts
+            let handle = app.handle().clone();
+            app.global_shortcut()
+                .on_shortcut(
+                    hotkeys.record_start.as_str(),
+                    move |_app, _shortcut, event| {
+                        if event.state == ShortcutState::Pressed {
+                            println!("Record Start Hotkey Pressed");
+                            let _ = handle.emit("hotkey:record-start", ());
+                        }
+                    },
+                )
+                .unwrap_or_else(|e| eprintln!("Failed to register record start hotkey: {}", e));
+
+            let handle = app.handle().clone();
+            app.global_shortcut()
+                .on_shortcut(
+                    hotkeys.record_stop.as_str(),
+                    move |_app, _shortcut, event| {
+                        if event.state == ShortcutState::Pressed {
+                            println!("Record Stop Hotkey Pressed");
+                            let _ = handle.emit("hotkey:record-stop", ());
+                        }
+                    },
+                )
+                .unwrap_or_else(|e| eprintln!("Failed to register record stop hotkey: {}", e));
+
+            let handle = app.handle().clone();
+            app.global_shortcut()
+                .on_shortcut(
+                    hotkeys.playback_start.as_str(),
+                    move |_app, _shortcut, event| {
+                        if event.state == ShortcutState::Pressed {
+                            println!("Playback Start Hotkey Pressed");
+                            let _ = handle.emit("hotkey:playback-start", ());
+                        }
+                    },
+                )
+                .unwrap_or_else(|e| eprintln!("Failed to register playback start hotkey: {}", e));
+
+            let handle = app.handle().clone();
+            app.global_shortcut()
+                .on_shortcut(
+                    hotkeys.playback_stop.as_str(),
+                    move |_app, _shortcut, event| {
+                        if event.state == ShortcutState::Pressed {
+                            println!("Playback Stop Hotkey Pressed");
+                            let _ = handle.emit("hotkey:playback-stop", ());
+                        }
+                    },
+                )
+                .unwrap_or_else(|e| eprintln!("Failed to register playback stop hotkey: {}", e));
+
+            println!("Hotkey setup completed");
+
+            // Load macros
+            let loaded_macros = load_macros_from_store(app.handle());
             println!("Loaded {} macros from store", loaded_macros.len());
 
-            // Manage state manually since we need loaded macros
             app.manage(AppState {
                 macros: Arc::new(Mutex::new(loaded_macros)),
                 recorder: Arc::new(Mutex::new(None)),
-                app_handle: app.app_handle().clone(),
+                app_handle: app.handle().clone(),
             });
 
-            let handle = app.app_handle().clone();
-
-            // Register default hotkeys - don't fail setup if registration fails
-            if let Err(e) = app.global_shortcut().on_shortcut(
-                hotkey_settings.record_start.as_str(),
-                move |_app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        let _ = handle.emit("hotkey:record-start", ());
-                    }
-                },
-            ) {
-                eprintln!(
-                    "Failed to register {}: {:?}",
-                    hotkey_settings.record_start, e
-                );
-            }
-
-            let handle = app.app_handle().clone();
-            if let Err(e) = app.global_shortcut().on_shortcut(
-                hotkey_settings.record_stop.as_str(),
-                move |_app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        let _ = handle.emit("hotkey:record-stop", ());
-                    }
-                },
-            ) {
-                eprintln!(
-                    "Failed to register {}: {:?}",
-                    hotkey_settings.record_stop, e
-                );
-            }
-
-            let handle = app.app_handle().clone();
-            if let Err(e) = app.global_shortcut().on_shortcut(
-                hotkey_settings.playback_start.as_str(),
-                move |_app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        let _ = handle.emit("hotkey:playback-start", ());
-                    }
-                },
-            ) {
-                eprintln!(
-                    "Failed to register {}: {:?}",
-                    hotkey_settings.playback_start, e
-                );
-            }
-
-            let handle = app.app_handle().clone();
-            if let Err(e) = app.global_shortcut().on_shortcut(
-                hotkey_settings.playback_stop.as_str(),
-                move |_app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        let _ = handle.emit("hotkey:playback-stop", ());
-                    }
-                },
-            ) {
-                eprintln!(
-                    "Failed to register {}: {:?}",
-                    hotkey_settings.playback_stop, e
-                );
-            }
-
-            println!("Hotkey setup completed");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             start_recording,
             stop_recording,
+            is_recording,
             play_macro,
             save_macro,
             load_all_macros,
@@ -359,8 +420,9 @@ pub fn run() {
             export_macro,
             import_macro,
             update_hotkeys,
-            is_recording,
             get_hotkeys,
+            update_app_settings,
+            get_app_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

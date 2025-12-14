@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Keyboard } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface HotkeyInputProps {
   label: string;
@@ -101,17 +102,15 @@ export const HotkeyInput: React.FC<HotkeyInputProps> = ({
           onKeyUp={handleKeyUp}
           readOnly
           placeholder={placeholder}
-          className={`
-            w-full pl-10 pr-3 py-2 border rounded-lg
-            focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent
-            dark:bg-gray-800 dark:border-gray-600 dark:text-white
-            ${isRecording ? "ring-2 ring-primary-500 border-primary-500" : ""}
-            cursor-pointer
-          `}
+          className={cn(
+            "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+            "pl-10 cursor-pointer",
+            isRecording && "ring-2 ring-ring"
+          )}
         />
         {isRecording && (
           <div className="absolute right-3 top-1/2 -translate-y-1/2">
-            <span className="text-xs text-primary-600 dark:text-primary-400 font-medium">
+            <span className="text-xs text-muted-foreground font-medium">
               Press keys...
             </span>
           </div>

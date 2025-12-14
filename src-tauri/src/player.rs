@@ -92,10 +92,12 @@ impl Player {
             }
             "KeyDown" => {
                 if let Some(key_str) = event.data.get("key").and_then(|v| v.as_str()) {
-                    // Note: Proper key conversion needed - this is a simplified version
-                    self.enigo
-                        .text(key_str)
-                        .map_err(|e| format!("Key press error: {:?}", e))?;
+                    self.simulate_key(key_str, Direction::Press)?;
+                }
+            }
+            "KeyUp" => {
+                if let Some(key_str) = event.data.get("key").and_then(|v| v.as_str()) {
+                    self.simulate_key(key_str, Direction::Release)?;
                 }
             }
             "MouseWheel" => {
@@ -113,6 +115,29 @@ impl Player {
 
         Ok(())
     }
+
+    // Helper to simulate key press/release
+    fn simulate_key(&mut self, key_str: &str, direction: Direction) -> Result<(), String> {
+        // Handle single character keys (alphanumeric, symbols)
+        if key_str.len() == 1 {
+            let ch = key_str.chars().next().unwrap();
+            // For single chars, we handle modifiers correctly by respecting the event direction.
+            // We use Key::Unicode to ensure the specific character is targeted.
+            let key = enigo::Key::Unicode(ch);
+            self.enigo
+                .key(key, direction)
+                .map_err(|e| format!("Key {:?} error: {:?}", direction, e))?;
+            return Ok(());
+        }
+
+        // Handle special Named keys
+        let key = string_to_enigo_key(key_str);
+        self.enigo
+            .key(key, direction)
+            .map_err(|e| format!("Key {:?} error: {:?}", direction, e))?;
+
+        Ok(())
+    }
 }
 
 fn convert_to_enigo_button(button_str: &str) -> Button {
@@ -121,5 +146,30 @@ fn convert_to_enigo_button(button_str: &str) -> Button {
         "Right" => Button::Right,
         "Middle" => Button::Middle,
         _ => Button::Left,
+    }
+}
+
+fn string_to_enigo_key(key_str: &str) -> enigo::Key {
+    use enigo::Key::*;
+    match key_str {
+        "Enter" => Return,
+        "Space" => Space,
+        "Backspace" => Backspace,
+        "Tab" => Tab,
+        "Escape" => Escape,
+        "Shift" => Shift,
+        "Control" => Control,
+        "Alt" => Alt,
+        "Meta" => Meta,
+        "CapsLock" => CapsLock,
+        // Add other keys as needed
+        _ => {
+            // Fallback for unknown keys or ignore
+            eprintln!("Unknown key string: {}", key_str);
+            // Default safe fallback (Escape usually safe to spam?) or just Layout
+            // Ideally we shouldn't hit this if recorder handles it.
+            // Returning a innocuous key
+            enigo::Key::Unicode(key_str.chars().next().unwrap_or('?'))
+        }
     }
 }

@@ -87,3 +87,11 @@ export interface AppState {
   isPlaying: boolean;
   currentRecordedEvents: number;
 }
+
+/**
+ * General application settings
+ */
+export interface AppSettings {
+  alwaysOnTop: boolean;
+  lastSelectedMacroId?: string;
+}

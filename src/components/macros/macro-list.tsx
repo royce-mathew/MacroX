@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Macro } from "../../types/macro";
 import { formatDistanceToNow } from "date-fns";
+import { cn } from "@/lib/utils";
 
 interface MacroListProps {
   macros: Macro[];
@@ -12,6 +13,8 @@ interface MacroListProps {
   onDelete: (macroId: string) => void;
   onExport: (macro: Macro) => void;
   onImport: () => void;
+  selectedMacroId?: string;
+  onSelect?: (id: string) => void;
 }
 
 export const MacroList: React.FC<MacroListProps> = ({
@@ -21,13 +24,15 @@ export const MacroList: React.FC<MacroListProps> = ({
   onDelete,
   onExport,
   onImport,
+  selectedMacroId,
+  onSelect,
 }) => {
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 w-full md:w-1/2">
+      <div className="flex flex-col gap-2 lg:flex-row items-center justify-between">
         <div>
-          <h2 className="text-3xl font-bold">My Macros</h2>
-          <p className="text-muted-foreground mt-2">
+          <h2 className="text-2xl md:text-3xl font-bold">My Macros</h2>
+          <p className="text-muted-foreground md:text-base text-sm mt-2">
             Manage and execute your saved macros
           </p>
         </div>
@@ -58,9 +63,15 @@ export const MacroList: React.FC<MacroListProps> = ({
           {macros.map((macro) => (
             <Card
               key={macro.id}
-              className="hover:shadow-md transition-shadow p-6"
+              className={cn(
+                "hover:shadow-md transition-all p-2 cursor-pointer border-2",
+                selectedMacroId === macro.id
+                  ? "border-primary shadow-md bg-accent/50"
+                  : "border-transparent hover:border-border"
+              )}
+              onClick={() => onSelect?.(macro.id)}
             >
-              <div className="flex items-start gap-4">
+              <div className="flex lg:flex-row flex-col lg:items-start items-center">
                 <div className="flex-1 min-w-0">
                   <h3 className="text-lg font-semibold mb-1">{macro.name}</h3>
                   {macro.description && (

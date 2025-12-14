@@ -80,3 +80,22 @@ impl Default for HotkeySettings {
         }
     }
 }
+
+/// General application settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    #[serde(rename = "alwaysOnTop")]
+    pub always_on_top: bool,
+    #[serde(rename = "lastSelectedMacroId")]
+    #[serde(default)]
+    pub last_selected_macro_id: Option<String>,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            always_on_top: false,
+            last_selected_macro_id: None,
+        }
+    }
+}

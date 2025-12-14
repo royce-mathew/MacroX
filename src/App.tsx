@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { attachConsole, info, error as logError } from "@tauri-apps/plugin-log";
 import { listen } from "@tauri-apps/api/event";
 import {
   Macro,
@@ -7,12 +8,16 @@ import {
   HotkeySettings,
   RecordingSettings,
   PlaybackSettings,
+  AppSettings,
 } from "./types/macro";
 import { ViewType, MainLayout } from "./components/layout/main-layout";
 import { RecordingPanel } from "./components/recording/recording-panel";
+import { MiniRecordingPanel } from "./components/recording/mini-recording-panel";
+import { PlaybackPanel } from "./components/recording/playback-panel";
 import { MacroList } from "./components/macros/macro-list";
 import { SettingsPanel } from "./components/settings/settings-panel";
 import { Toaster, toast } from "sonner";
+import { useWindowManager } from "./hooks/use-window-manager";
 
 function App() {
   const [currentView, setCurrentView] = useState<ViewType>("recording");
@@ -20,6 +25,14 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [recordedEvents, setRecordedEvents] = useState<MacroEvent[]>([]);
+  const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
+
+  // Window Manager Hook
+  const { isMiniMode, toggleMiniMode } = useWindowManager();
+
+  const [notificationMsg, setNotificationMsg] = useState<string>("");
+  const [selectedPlaybackMacroId, setSelectedPlaybackMacroId] =
+    useState<string>("");
 
   const [recordingSettings, setRecordingSettings] = useState<RecordingSettings>(
     {
@@ -36,6 +49,52 @@ function App() {
     playbackStop: "F12",
   });
 
+  // Refs for state access in event listeners
+  const isRecordingRef = useRef(isRecording);
+  const isPlayingRef = useRef(isPlaying);
+  const recordedEventsRef = useRef(recordedEvents);
+  const recordingSettingsRef = useRef(recordingSettings);
+  const currentViewRef = useRef(currentView);
+  const isMiniModeRef = useRef(isMiniMode);
+
+  useEffect(() => {
+    attachConsole();
+  }, []);
+
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+    isPlayingRef.current = isPlaying;
+    recordedEventsRef.current = recordedEvents;
+    recordingSettingsRef.current = recordingSettings;
+    currentViewRef.current = currentView;
+    isMiniModeRef.current = isMiniMode;
+  }, [
+    isRecording,
+    isPlaying,
+    recordedEvents,
+    recordingSettings,
+    currentView,
+    isMiniMode,
+  ]);
+
+  // Centralized Notification Handler
+  const handleNotify = (
+    message: string,
+    type: "success" | "error" | "info" | "warning" = "info"
+  ) => {
+    if (isMiniModeRef.current) {
+      setNotificationMsg(message);
+      // Auto-clear after 3 seconds
+      setTimeout(() => setNotificationMsg(""), 3000);
+    } else {
+      // Standard Toast
+      if (type === "success") toast.success(message);
+      else if (type === "error") toast.error(message);
+      else if (type === "warning") toast.warning(message);
+      else toast.info(message);
+    }
+  };
+
   const getActionEventCount = (events: MacroEvent[]) => {
     return events.filter((e) => {
       const eventData = e as any;
@@ -50,11 +109,11 @@ function App() {
       await invoke("start_recording", { settings: recordingSettings });
       setIsRecording(true);
       setRecordedEvents([]);
-      console.log("Recording started");
-      toast.success("Recording started");
+      info("Recording started");
+      handleNotify("Recording started", "success");
     } catch (error) {
-      console.error("Failed to start recording:", error);
-      toast.error(`Failed to start recording: ${error}`);
+      logError(`Failed to start recording: ${error}`);
+      handleNotify(`Failed to start recording: ${error}`, "error");
     }
   };
 
@@ -65,10 +124,13 @@ function App() {
       setRecordedEvents(events);
 
       const actionCount = getActionEventCount(events);
-      console.log(
+      info(
         `Recording stopped. Captured ${events.length} total events (${actionCount} actions)`
       );
-      toast.success(`Recording stopped. Captured ${events.length} events`);
+      handleNotify(
+        `Recording stopped. Captured ${events.length} events`,
+        "success"
+      );
 
       if (events.length > 0) {
         const newMacro: Macro = {
@@ -87,19 +149,23 @@ function App() {
         };
         setMacros([...macros, newMacro]);
         await invoke("save_macro", { macroData: newMacro });
+
+        // Auto-select the newly created macro
+        handleMacroSelect(newMacro.id);
       }
     } catch (error) {
-      console.error("Failed to stop recording:", error);
+      logError(`Failed to stop recording: ${error}`);
       setIsRecording(false);
-      toast.error(`Failed to stop recording: ${error}`);
+      handleNotify(`Failed to stop recording: ${error}`, "error");
     }
   };
 
   const handlePlayRecordedEvents = async (
+    events: MacroEvent[],
     playbackSettings: PlaybackSettings
   ) => {
-    if (recordedEvents.length === 0) {
-      toast.error("No events to play");
+    if (events.length === 0) {
+      handleNotify("No events to play", "error");
       return;
     }
 
@@ -109,18 +175,18 @@ function App() {
         id: "temp",
         name: "Preview",
         description: "Preview playback",
-        events: recordedEvents,
-        recordingSettings,
+        events: events,
+        recordingSettings, // Use current recording settings as default
         playbackSettings,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
       await invoke("play_macro", { macroData: tempMacro });
-      console.log("Playback completed");
+      info("Playback completed");
     } catch (error) {
-      console.error("Failed to play events:", error);
-      alert(`Failed to play: ${error}`);
+      logError(`Failed to play events: ${error}`);
+      handleNotify(`Failed to play: ${error}`, "error");
     } finally {
       setIsPlaying(false);
     }
@@ -128,62 +194,123 @@ function App() {
 
   const handleStopPlayback = () => {
     setIsPlaying(false);
-    console.log("Playback stopped");
+    info("Playback stopped");
   };
 
   const handlePlayMacro = async (macro: Macro) => {
     try {
       setIsPlaying(true);
-      console.log("Playing macro:", macro.name);
-      toast.info(`Playing macro: ${macro.name}`);
+      info(`Playing macro: ${macro.name}`);
+      handleNotify(`Playing macro: ${macro.name}`, "info");
       await invoke("play_macro", { macroData: macro });
-      console.log("Macro playback completed");
-      toast.success("Playback completed");
+      info("Macro playback completed");
+      handleNotify("Playback completed", "success");
     } catch (error) {
-      console.error("Failed to play macro:", error);
-      toast.error(`Failed to play macro: ${error}`);
+      logError(`Failed to play macro: ${error}`);
+      handleNotify(`Failed to play macro: ${error}`, "error");
     } finally {
       setIsPlaying(false);
     }
   };
 
   const handleEditMacro = (macro: Macro) => {
-    console.log("Edit macro:", macro.name);
+    info(`Edit macro: ${macro.name}`);
   };
 
   const handleDeleteMacro = async (macroId: string) => {
     try {
       setMacros(macros.filter((m) => m.id !== macroId));
       await invoke("delete_macro", { macroId });
-      toast.success("Macro deleted");
+
+      // If deleted macro was selected, switch to first available or empty
+      if (selectedPlaybackMacroId === macroId) {
+        const remaining = macros.filter((m) => m.id !== macroId);
+        if (remaining.length > 0) {
+          handleMacroSelect(remaining[0].id);
+        } else {
+          handleMacroSelect("");
+        }
+      }
+
+      handleNotify("Macro deleted", "success");
     } catch (error) {
-      console.error("Failed to delete macro:", error);
-      toast.error("Failed to delete macro");
+      logError(`Failed to delete macro: ${error}`);
+      handleNotify("Failed to delete macro", "error");
     }
   };
 
   const handleExportMacro = async (macro: Macro) => {
     try {
-      console.log("Exporting macro:", macro);
+      info(`Exporting macro: ${JSON.stringify(macro)}`);
       await invoke("export_macro", { macroData: macro });
     } catch (error) {
-      console.error("Failed to export macro:", error);
+      logError(`Failed to export macro: ${error}`);
     }
   };
 
   const handleImportMacro = async () => {
     try {
-      console.log("Importing macro...");
+      info("Importing macro...");
       const macro = await invoke<Macro | null>("import_macro");
       if (macro) {
         setMacros((prev) => [...prev, macro]);
         await invoke("save_macro", { macroData: macro });
-        toast.success("Macro imported");
+        handleNotify("Macro imported", "success");
       }
     } catch (error) {
-      console.error("Failed to import macro:", error);
+      logError(`Failed to import macro: ${error}`);
     }
   };
+
+  const toggleAlwaysOnTop = async () => {
+    const newState = !isAlwaysOnTop;
+    try {
+      await invoke("update_app_settings", {
+        settings: { alwaysOnTop: newState },
+      });
+      setIsAlwaysOnTop(newState);
+      handleNotify(
+        newState ? "Window pinned to top" : "Window unpinned",
+        "success"
+      );
+    } catch (error) {
+      logError(`Failed to toggle always on top: ${error}`);
+      handleNotify(
+        newState ? "Window pinned to top" : "Window unpinned",
+        "success"
+      );
+    }
+  };
+
+  const handleMacroSelect = async (id: string) => {
+    setSelectedPlaybackMacroId(id);
+    try {
+      // Need to send the full settings object, merging current state
+      await invoke("update_app_settings", {
+        settings: {
+          alwaysOnTop: isAlwaysOnTop,
+          lastSelectedMacroId: id,
+        },
+      });
+    } catch (error) {
+      logError(`Failed to save selection: ${error}`);
+    }
+  };
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const settings = await invoke<AppSettings>("get_app_settings");
+        setIsAlwaysOnTop(settings.alwaysOnTop);
+        if (settings.lastSelectedMacroId) {
+          setSelectedPlaybackMacroId(settings.lastSelectedMacroId);
+        }
+      } catch (error) {
+        logError(`Failed to load app settings: ${error}`);
+      }
+    };
+    loadSettings();
+  }, []);
 
   useEffect(() => {
     const updateHotkeys = async () => {
@@ -194,27 +321,14 @@ function App() {
           playbackStart: hotkeySettings.playbackStart,
           playbackStop: hotkeySettings.playbackStop,
         });
-        console.log("Hotkeys updated:", hotkeySettings);
+        info(`Hotkeys updated: ${JSON.stringify(hotkeySettings)}`);
       } catch (error) {
-        console.error("Failed to update hotkeys:", error);
+        logError(`Failed to update hotkeys: ${error}`);
       }
     };
 
     updateHotkeys();
   }, [hotkeySettings]);
-
-  // Refs for state access in event listeners
-  const isRecordingRef = useRef(isRecording);
-  const isPlayingRef = useRef(isPlaying);
-  const recordedEventsRef = useRef(recordedEvents);
-  const recordingSettingsRef = useRef(recordingSettings);
-
-  useEffect(() => {
-    isRecordingRef.current = isRecording;
-    isPlayingRef.current = isPlaying;
-    recordedEventsRef.current = recordedEvents;
-    recordingSettingsRef.current = recordingSettings;
-  }, [isRecording, isPlaying, recordedEvents, recordingSettings]);
 
   // Load macros and check status on mount
   useEffect(() => {
@@ -232,8 +346,29 @@ function App() {
         if (recordingStatus) {
           setIsRecording(true);
         }
+
+        // Initialize selection if needed
+        if (loadedMacros.length > 0) {
+          try {
+            const settings = await invoke<AppSettings>("get_app_settings");
+            let targetId = settings.lastSelectedMacroId;
+
+            // Verify target exists
+            if (!targetId || !loadedMacros.find((m) => m.id === targetId)) {
+              targetId = loadedMacros[0].id; // Default to first
+              // Update settings to match default
+              await invoke("update_app_settings", {
+                settings: { ...settings, lastSelectedMacroId: targetId },
+              });
+            }
+            setSelectedPlaybackMacroId(targetId);
+          } catch (e) {
+            logError(`Selection init error: ${e}`);
+            setSelectedPlaybackMacroId(loadedMacros[0].id);
+          }
+        }
       } catch (error) {
-        console.error("Failed to initialize app:", error);
+        logError(`Failed to initialize app: ${error}`);
       }
     };
     initialize();
@@ -247,16 +382,30 @@ function App() {
     const setupListeners = async () => {
       const u1 = await listen("hotkey:record-start", () => {
         if (!isMounted) return;
+        // Disable hotkeys in settings to prevent accidental triggering while configuring
+        if (currentViewRef.current === "settings") return;
+
         if (!isRecordingRef.current && !isPlayingRef.current) {
           invoke("start_recording", { settings: recordingSettingsRef.current })
             .then(() => {
               setIsRecording(true);
               setRecordedEvents([]);
-              console.log("Recording started via hotkey");
+              info("Recording started via hotkey");
+              if (isMiniModeRef.current) {
+                setNotificationMsg("Recording started via hotkey");
+                setTimeout(() => setNotificationMsg(""), 3000);
+              } else {
+                toast.success("Recording started via hotkey");
+              }
             })
             .catch((err) => {
-              console.error("Failed to start recording:", err);
-              alert(`Failed to start recording: ${err}`);
+              logError(`Failed to start recording: ${err}`);
+              if (isMiniModeRef.current) {
+                setNotificationMsg(`Failed to start: ${err}`);
+                setTimeout(() => setNotificationMsg(""), 3000);
+              } else {
+                toast.error(`Failed to start recording: ${err}`);
+              }
             });
         }
       });
@@ -266,16 +415,32 @@ function App() {
       }
       unlistenFunctions.push(u1);
 
+      // Listen for recording warnings (hotkeys pressed)
+      const uWarning = await listen<string>("recording-warning", (event) => {
+        if (!isMounted) return;
+        if (isMiniModeRef.current) {
+          setNotificationMsg(event.payload || "Hotkey detected");
+          setTimeout(() => setNotificationMsg(""), 3000);
+        } else {
+          toast.warning(event.payload || "Hotkey detected and ignored");
+        }
+      });
+      if (!isMounted) {
+        uWarning();
+        return;
+      }
+      unlistenFunctions.push(uWarning);
+
       const u2 = await listen("hotkey:record-stop", () => {
         if (!isMounted) return;
+        if (currentViewRef.current === "settings") return;
+
         if (isRecordingRef.current) {
           invoke<MacroEvent[]>("stop_recording")
             .then((events) => {
               setIsRecording(false);
               setRecordedEvents(events);
-              console.log(
-                `Recording stopped. Captured ${events.length} events`
-              );
+              info(`Recording stopped. Captured ${events.length} events`);
 
               if (events.length > 0) {
                 setMacros((prevMacros) => {
@@ -294,17 +459,31 @@ function App() {
                     updatedAt: new Date(),
                   };
                   // Persist the new macro
-                  invoke("save_macro", { macroData: newMacro }).catch(
-                    console.error
+                  invoke("save_macro", { macroData: newMacro }).catch((e) =>
+                    logError(String(e))
                   );
                   return [...prevMacros, newMacro];
                 });
               }
+              // Notification
+              if (isMiniModeRef.current) {
+                setNotificationMsg(`Stopped. ${events.length} events`);
+                setTimeout(() => setNotificationMsg(""), 3000);
+              } else {
+                toast.success(
+                  `Recording stopped. Captured ${events.length} events`
+                );
+              }
             })
             .catch((err) => {
-              console.error("Failed to stop recording:", err);
+              logError(`Failed to stop recording: ${err}`);
               setIsRecording(false);
-              alert(`Failed to stop recording: ${err}`);
+              if (isMiniModeRef.current) {
+                setNotificationMsg(`Failed to stop: ${err}`);
+                setTimeout(() => setNotificationMsg(""), 3000);
+              } else {
+                toast.error(`Failed to stop recording: ${err}`);
+              }
             });
         }
       });
@@ -316,6 +495,8 @@ function App() {
 
       const u3 = await listen("hotkey:playback-start", () => {
         if (!isMounted) return;
+        if (currentViewRef.current === "settings") return;
+
         if (
           !isRecordingRef.current &&
           !isPlayingRef.current &&
@@ -331,17 +512,23 @@ function App() {
             playbackSettings: {
               speed: 1,
               repeatMode: "once",
-              repeatCount: 1,
+              repeatCount: 1, // Default playback hotkey is usually once
             },
             createdAt: new Date(),
             updatedAt: new Date(),
           };
 
           invoke("play_macro", { macroData: tempMacro })
-            .then(() => console.log("Playback completed"))
+            .then(() => info("Playback completed"))
             .catch((err) => {
-              console.error("Failed to play:", err);
-              alert(`Failed to play: ${err}`);
+              logError(`Failed to play: ${err}`);
+              if (isMiniModeRef.current) {
+                setNotificationMsg(`Info: ${err}`); // Using info to allow reading
+                setTimeout(() => setNotificationMsg(""), 3000);
+              } else {
+                // toast.error(`Failed to play: ${err}`); // Optional
+                alert(`Failed to play: ${err}`);
+              }
             })
             .finally(() => setIsPlaying(false));
         }
@@ -354,6 +541,8 @@ function App() {
 
       const u4 = await listen("hotkey:playback-stop", () => {
         if (!isMounted) return;
+        if (currentViewRef.current === "settings") return;
+
         if (isPlayingRef.current) {
           setIsPlaying(false);
         }
@@ -375,41 +564,77 @@ function App() {
 
   return (
     <>
-      <MainLayout currentView={currentView} onViewChange={setCurrentView}>
-        {currentView === "recording" && (
-          <RecordingPanel
+      <MainLayout
+        currentView={currentView}
+        onViewChange={setCurrentView}
+        isMiniMode={isMiniMode}
+        onToggleMiniMode={toggleMiniMode}
+      >
+        {isMiniMode ? (
+          <MiniRecordingPanel
             isRecording={isRecording}
-            isPlaying={isPlaying}
-            actionEventCount={getActionEventCount(recordedEvents)}
-            recordingSettings={recordingSettings}
+            notificationMsg={notificationMsg}
             onStartRecording={handleStartRecording}
             onStopRecording={handleStopRecording}
-            onSettingsChange={setRecordingSettings}
-            onPlayRecorded={handlePlayRecordedEvents}
-            onStopPlayback={handleStopPlayback}
-            hasRecordedEvents={recordedEvents.length > 0}
-            recordedEvents={recordedEvents}
-          />
-        )}
-
-        {currentView === "macros" && (
-          <MacroList
+            // Recording Props
+            recordingSettings={recordingSettings}
+            onRecordingSettingsChange={setRecordingSettings}
+            // Playback Props
             macros={macros}
-            onPlay={handlePlayMacro}
-            onEdit={handleEditMacro}
-            onDelete={handleDeleteMacro}
-            onExport={handleExportMacro}
-            onImport={handleImportMacro}
+            isPlaying={isPlaying}
+            onPlayMacro={handlePlayMacro}
+            onStopPlayback={handleStopPlayback}
+            selectedMacroId={selectedPlaybackMacroId}
+            onMacroSelect={handleMacroSelect}
           />
-        )}
+        ) : (
+          <>
+            {currentView === "recording" && (
+              <div className="h-full pb-4">
+                <RecordingPanel
+                  isRecording={isRecording}
+                  recordingSettings={recordingSettings}
+                  onStartRecording={handleStartRecording}
+                  onStopRecording={handleStopRecording}
+                  onSettingsChange={setRecordingSettings}
+                />
+              </div>
+            )}
 
-        {currentView === "settings" && (
-          <SettingsPanel
-            hotkeySettings={hotkeySettings}
-            defaultRecordingSettings={recordingSettings}
-            onHotkeyChange={setHotkeySettings}
-            onDefaultRecordingChange={setRecordingSettings}
-          />
+            {currentView === "macros" && (
+              <div className="flex flex-col md:flex-row gap-3 h-full pb-4">
+                <MacroList
+                  macros={macros}
+                  onPlay={handlePlayMacro}
+                  onEdit={handleEditMacro}
+                  onDelete={handleDeleteMacro}
+                  onExport={handleExportMacro}
+                  onImport={handleImportMacro}
+                  selectedMacroId={selectedPlaybackMacroId}
+                  onSelect={handleMacroSelect}
+                />
+                <PlaybackPanel
+                  isPlaying={isPlaying}
+                  actionEventCount={getActionEventCount(recordedEvents)}
+                  onPlayRecorded={handlePlayRecordedEvents}
+                  onStopPlayback={handleStopPlayback}
+                  recordedEvents={recordedEvents}
+                  macros={macros}
+                  selectedMacroId={selectedPlaybackMacroId}
+                  onMacroSelect={handleMacroSelect}
+                />
+              </div>
+            )}
+
+            {currentView === "settings" && (
+              <SettingsPanel
+                hotkeySettings={hotkeySettings}
+                onHotkeyChange={setHotkeySettings}
+                isAlwaysOnTop={isAlwaysOnTop}
+                onToggleAlwaysOnTop={toggleAlwaysOnTop}
+              />
+            )}
+          </>
         )}
       </MainLayout>
       <Toaster />

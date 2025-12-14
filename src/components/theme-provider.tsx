@@ -6,6 +6,7 @@ import {
   ReactNode,
 } from "react";
 import { Store } from "@tauri-apps/plugin-store";
+import { error } from "@tauri-apps/plugin-log";
 
 type Theme = "dark" | "light" | "system";
 
@@ -47,8 +48,8 @@ export function ThemeProvider({
         if (savedTheme) {
           setTheme(savedTheme);
         }
-      } catch (error) {
-        console.error("Failed to load theme:", error);
+      } catch (err) {
+        error(`Failed to load theme: ${err}`);
       }
     };
 
@@ -90,8 +91,8 @@ export function ThemeProvider({
         try {
           await store.set(storageKey, newTheme);
           await store.save();
-        } catch (error) {
-          console.error("Failed to save theme:", error);
+        } catch (err) {
+          error(`Failed to save theme: ${err}`);
         }
       }
       setTheme(newTheme);

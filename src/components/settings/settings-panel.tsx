@@ -5,27 +5,27 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { HotkeyInput } from "../ui/hotkey-input";
 import { ModeToggle } from "../mode-toggle";
-import { HotkeySettings, RecordingSettings } from "../../types/macro";
+import { HotkeySettings } from "../../types/macro";
 
 interface SettingsPanelProps {
   hotkeySettings: HotkeySettings;
-  defaultRecordingSettings: RecordingSettings;
   onHotkeyChange: (settings: HotkeySettings) => void;
-  onDefaultRecordingChange: (settings: RecordingSettings) => void;
+  isAlwaysOnTop: boolean;
+  onToggleAlwaysOnTop: () => void;
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   hotkeySettings,
-  defaultRecordingSettings,
   onHotkeyChange,
-  onDefaultRecordingChange,
+  isAlwaysOnTop,
+  onToggleAlwaysOnTop,
 }) => {
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-3xl font-bold">Settings</h2>
         <p className="text-muted-foreground mt-2">
-          Configure global hotkeys and default recording preferences
+          Configure global hotkeys and preferences
         </p>
       </div>
 
@@ -42,6 +42,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               </p>
             </div>
             <ModeToggle />
+          </div>
+          <Separator className="my-4" />
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label>Always on Top</Label>
+              <p className="text-sm text-muted-foreground">
+                Keep the window floating above other applications
+              </p>
+            </div>
+            <Checkbox
+              checked={isAlwaysOnTop}
+              onCheckedChange={onToggleAlwaysOnTop}
+            />
           </div>
         </CardContent>
       </Card>
@@ -106,77 +119,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             }
             placeholder="Click and press keys..."
           />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Default Recording Options</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            These options will be automatically selected when you start a new
-            recording
-          </p>
-
-          <Separator />
-
-          <div className="flex items-center space-x-3">
-            <Checkbox
-              id="default-mouse-movement"
-              checked={defaultRecordingSettings.recordMouseMovement}
-              onCheckedChange={(checked) =>
-                onDefaultRecordingChange({
-                  ...defaultRecordingSettings,
-                  recordMouseMovement: checked as boolean,
-                })
-              }
-            />
-            <div className="grid gap-1.5 leading-none">
-              <Label htmlFor="default-mouse-movement">Mouse Movement</Label>
-              <p className="text-sm text-muted-foreground">
-                Record cursor movements by default
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-3">
-            <Checkbox
-              id="default-mouse-clicks"
-              checked={defaultRecordingSettings.recordMouseClicks}
-              onCheckedChange={(checked) =>
-                onDefaultRecordingChange({
-                  ...defaultRecordingSettings,
-                  recordMouseClicks: checked as boolean,
-                })
-              }
-            />
-            <div className="grid gap-1.5 leading-none">
-              <Label htmlFor="default-mouse-clicks">Mouse Clicks</Label>
-              <p className="text-sm text-muted-foreground">
-                Record mouse clicks by default
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-3">
-            <Checkbox
-              id="default-keyboard"
-              checked={defaultRecordingSettings.recordKeyboard}
-              onCheckedChange={(checked) =>
-                onDefaultRecordingChange({
-                  ...defaultRecordingSettings,
-                  recordKeyboard: checked as boolean,
-                })
-              }
-            />
-            <div className="grid gap-1.5 leading-none">
-              <Label htmlFor="default-keyboard">Keyboard Input</Label>
-              <p className="text-sm text-muted-foreground">
-                Record keyboard input by default
-              </p>
-            </div>
-          </div>
         </CardContent>
       </Card>
 
